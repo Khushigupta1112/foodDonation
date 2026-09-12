@@ -4,7 +4,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
-  serverExternalPackages: ["@libsql/client", "libsql"],
+  serverExternalPackages: ["pg"],
 };
 
 export default nextConfig;

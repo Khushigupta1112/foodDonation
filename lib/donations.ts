@@ -1,4 +1,4 @@
-import { all, batch, get, run } from "./db";
+import { all, batch, get, insert, run } from "./db";
 import type { Claim, Donation, DonationStatus, FoodCategory } from "./types";
 
 const DONATION_SELECT = `
@@ -91,9 +91,10 @@ export interface NewDonationInput {
 }
 
 export async function createDonation(input: NewDonationInput): Promise<Donation | null> {
-  const result = await run(
+  const id = await insert(
     `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, image_url)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     RETURNING id`,
     input.donorId,
     input.title,
     input.description,
@@ -107,7 +108,7 @@ export async function createDonation(input: NewDonationInput): Promise<Donation 
     input.city,
     input.imageUrl
   );
-  return getDonation(Number(result.lastInsertRowid));
+  return getDonation(id);
 }
 
 export async function listDonationsByDonor(donorId: number): Promise<Donation[]> {
@@ -123,7 +124,7 @@ export async function countPendingClaims(donationId: number): Promise<number> {
     "SELECT COUNT(*) AS n FROM claims WHERE donation_id = ? AND status = 'pending'",
     donationId
   );
-  return row?.n ?? 0;
+  return row ? Number(row.n) : 0;
 }
 
 export async function getClaim(claimId: number): Promise<Claim | null> {
@@ -261,7 +262,14 @@ export async function getStats(): Promise<{
     new Date().toISOString()
   );
   const stats = row ?? { total_saved: 0, active_donations: 0, total_donations: 0, ngos: 0 };
-  return { ...stats, co2_saved_kg: Math.round(stats.total_saved * 0.5 * 10) / 10 };
+  const totalSaved = Number(stats.total_saved);
+  return {
+    total_saved: totalSaved,
+    active_donations: Number(stats.active_donations),
+    total_donations: Number(stats.total_donations),
+    ngos: Number(stats.ngos),
+    co2_saved_kg: Math.round(totalSaved * 0.5 * 10) / 10,
+  };
 }
 
 export type { DonationStatus };

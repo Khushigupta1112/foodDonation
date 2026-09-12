@@ -105,44 +105,42 @@ scripts/seed.mjs  # demo data
 legacy/           # original console-app prototype
 ```
 
-## Deploying to Vercel (with Turso)
+## Deploying to Vercel (with Neon Postgres)
 
-Vercel's filesystem is ephemeral, so production uses [Turso](https://turso.app) — a free hosted SQLite (libSQL). Local dev needs no setup (it falls back to a local `file:` SQLite database automatically).
+The app stores data in Postgres. Local development and production both connect through a single env var: `DATABASE_URL`.
 
-### 1. Create a Turso database
+### 1. Create a Neon database (~2 min)
 
-1. Sign up at [turso.app](https://turso.app) (free plan — no credit card).
-2. Create a database (any name, e.g. `foodshare`), any location close to your users.
-3. From the database page copy the **Database URL** (`libsql://…turso.io`).
-4. Create a **database token** and copy it.
+1. Sign up at [neon.tech](https://neon.tech) — free plan, sign in with GitHub or Google (no credit card).
+2. Create a project (any name, e.g. `foodshare`).
+3. Copy the **connection string** — it looks like:
+   `postgresql://user:password@ep-xxx.region.aws.neon.tech/neondb?sslmode=require`
 
-### 2. Import the repo in Vercel
-
-1. Push this repo to GitHub (already done).
-2. In [vercel.com/new](https://vercel.com/new), import `Khushigupta1112/foodDonation`.
-3. Framework preset: **Next.js** (auto-detected). No build settings needed.
-4. Add two Environment Variables:
-   - `TURSO_DATABASE_URL` = your `libsql://…` URL
-   - `TURSO_AUTH_TOKEN` = your token
-5. Deploy.
-
-### 3. Seed the production database (optional)
-
-From your machine, pointing at Turso:
+### 2. Seed your database (optional)
 
 ```powershell
-$env:TURSO_DATABASE_URL = "libsql://…turso.io"
-$env:TURSO_AUTH_TOKEN   = "your-token"
+cd foodDonation
+$env:DATABASE_URL = "postgresql://...neon.tech/neondb?sslmode=require"
 npm run db:seed
 ```
 
-### Local development
+### 3. Local development
 
-```bash
-npm install
-npm run db:seed   # seeds data/foodshare.db
-npm run dev
+Put the connection string in `.env.local` (git-ignored):
+
+```env
+DATABASE_URL=postgresql://...neon.tech/neondb?sslmode=require
 ```
+
+Then `npm run dev` as usual.
+
+### 4. Deploy on Vercel
+
+1. In [vercel.com/new](https://vercel.com/new), import `Khushigupta1112/foodDonation`.
+2. Framework preset: **Next.js** (auto-detected). No build settings needed.
+3. Add one Environment Variable:
+   - `DATABASE_URL` = your Neon connection string
+4. Deploy.
 
 ## Roadmap ideas
 

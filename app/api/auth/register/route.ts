@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { get, run } from "@/lib/db";
+import { get, insert } from "@/lib/db";
 import { createSession, hashPassword, validateRegistration } from "@/lib/auth";
 
 export async function POST(request: Request) {
@@ -23,8 +23,8 @@ export async function POST(request: Request) {
   const orgName = typeof body.org_name === "string" && body.org_name.trim() ? body.org_name.trim() : null;
   const phone = typeof body.phone === "string" && body.phone.trim() ? body.phone.trim() : null;
 
-  const result = await run(
-    "INSERT INTO users (name, email, password_hash, role, org_name, phone) VALUES (?, ?, ?, ?, ?, ?)",
+  const userId = await insert(
+    "INSERT INTO users (name, email, password_hash, role, org_name, phone) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
     valid.name,
     valid.email,
     hashPassword(valid.password),
@@ -33,6 +33,6 @@ export async function POST(request: Request) {
     phone
   );
 
-  await createSession(Number(result.lastInsertRowid));
+  await createSession(userId);
   return NextResponse.json({ ok: true }, { status: 201 });
 }

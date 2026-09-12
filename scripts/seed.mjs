@@ -1,16 +1,18 @@
 import { randomBytes, scryptSync } from "node:crypto";
-import { createClient } from "@libsql/client";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import pg from "pg";
 
-const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-if (!process.env.TURSO_DATABASE_URL) {
-  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error("DATABASE_URL is not set. Add your Neon Postgres connection string first.");
+  console.error("  PowerShell:  $env:DATABASE_URL = \"postgresql://...\"");
+  process.exit(1);
 }
 
-const url = process.env.TURSO_DATABASE_URL ?? `file:${path.join(root, "data", "foodshare.db")}`;
-const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
+const isLocal = /localhost|127\.0\.0\.1/.test(connectionString);
+const db = new pg.Pool({
+  connectionString,
+  ssl: isLocal ? undefined : { rejectUnauthorized: false },
+});
 
 function hashPassword(password) {
   const salt = randomBytes(16).toString("hex");
@@ -21,25 +23,25 @@ const now = new Date();
 const hoursFromNow = (h) => new Date(now.getTime() + h * 3600_000).toISOString();
 const hoursAgo = (h) => new Date(now.getTime() - h * 3600_000).toISOString();
 
-await db.executeMultiple(`
+await db.query(`
   CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('donor', 'claimer')),
     org_name TEXT,
     phone TEXT,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
   );
   CREATE TABLE IF NOT EXISTS sessions (
     token_hash TEXT PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     expires_at TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
   );
   CREATE TABLE IF NOT EXISTS donations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     donor_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -53,26 +55,22 @@ await db.executeMultiple(`
     city TEXT NOT NULL,
     image_url TEXT,
     status TEXT NOT NULL DEFAULT 'available' CHECK (status IN ('available','reserved','picked_up','cancelled')),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+    updated_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
   );
   CREATE TABLE IF NOT EXISTS claims (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     donation_id INTEGER NOT NULL REFERENCES donations(id) ON DELETE CASCADE,
     claimer_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     message TEXT,
     status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','approved','rejected','cancelled','completed')),
-    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
+    updated_at TEXT NOT NULL DEFAULT (to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')),
     UNIQUE (donation_id, claimer_id)
   );
 `);
 
-await db.executeMultiple(`
-  DELETE FROM claims; DELETE FROM sessions;
-  DELETE FROM donations; DELETE FROM users;
-  DELETE FROM sqlite_sequence WHERE name IN ('users','donations','claims');
-`);
+await db.query("TRUNCATE claims, sessions, donations, users RESTART IDENTITY CASCADE");
 
 const users = [
   ["Aarti Sharma", "donor@foodshare.test", "donor", "Hotel Green Leaf", "+91 98100 11111"],
@@ -83,11 +81,11 @@ const users = [
 
 const userIds = {};
 for (const [name, email, role, org, phone] of users) {
-  const res = await db.execute({
-    sql: "INSERT INTO users (name, email, password_hash, role, org_name, phone) VALUES (?, ?, ?, ?, ?, ?)",
-    args: [name, email, hashPassword("password123"), role, org, phone],
-  });
-  userIds[email] = Number(res.lastInsertRowid);
+  const res = await db.query(
+    "INSERT INTO users (name, email, password_hash, role, org_name, phone) VALUES ($1,$2,$3,$4,$5,$6) RETURNING id",
+    [name, email, hashPassword("password123"), role, org, phone]
+  );
+  userIds[email] = res.rows[0].id;
 }
 
 const donations = [
@@ -144,31 +142,32 @@ const donations = [
 
 const donationIds = [];
 for (const d of donations) {
-  const res = await db.execute({
-    sql: `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [userIds[d.donor], d.title, d.description, d.category, d.quantity, d.servings, d.veg, d.expiry, d.pickup, d.address, d.city, d.status, d.created, d.created],
-  });
-  donationIds.push(Number(res.lastInsertRowid));
+  const res = await db.query(
+    `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, status, created_at, updated_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$13) RETURNING id`,
+    [userIds[d.donor], d.title, d.description, d.category, d.quantity, d.servings, d.veg, d.expiry, d.pickup, d.address, d.city, d.status, d.created]
+  );
+  donationIds.push(res.rows[0].id);
 }
 
-await db.execute({
-  sql: `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-  args: [donationIds[3], userIds["ngo@foodshare.test"],
-    "We can send a volunteer by 6 PM, we serve 60 kids daily.", "approved", hoursAgo(6), hoursAgo(5)],
-});
+await db.query(
+  "INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6)",
+  [donationIds[3], userIds["ngo@foodshare.test"],
+    "We can send a volunteer by 6 PM, we serve 60 kids daily.", "approved", hoursAgo(6), hoursAgo(5)]
+);
 
-await db.execute({
-  sql: `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-  args: [donationIds[5], userIds["volunteer@foodshare.test"],
-    "Picking up on my bike, can reach by 4:30.", "completed", hoursAgo(28), hoursAgo(26)],
-});
+await db.query(
+  "INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6)",
+  [donationIds[5], userIds["volunteer@foodshare.test"],
+    "Picking up on my bike, can reach by 4:30.", "completed", hoursAgo(28), hoursAgo(26)]
+);
 
-await db.execute({
-  sql: `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
-  args: [donationIds[6], userIds["ngo@foodshare.test"],
-    "Will collect with our van.", "completed", hoursAgo(48), hoursAgo(47)],
-});
+await db.query(
+  "INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES ($1,$2,$3,$4,$5,$6)",
+  [donationIds[6], userIds["ngo@foodshare.test"],
+    "Will collect with our van.", "completed", hoursAgo(48), hoursAgo(47)]
+);
 
-console.log("Seed complete ✔  (" + url + ")");
+await db.end();
+console.log("Seed complete ✔");
 console.log("  Log in with donor@foodshare.test / ngo@foodshare.test — password: password123");
