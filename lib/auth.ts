@@ -1,6 +1,6 @@
 import { createHash, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
 import { cookies } from "next/headers";
-import db, { plain } from "./db";
+import { get, run } from "./db";
 import type { User, UserRole } from "./types";
 
 const SESSION_COOKIE = "fs_session";
@@ -27,7 +27,7 @@ function hashToken(token: string): string {
 export async function createSession(userId: number): Promise<void> {
   const token = randomBytes(32).toString("hex");
   const expires = new Date(Date.now() + SESSION_TTL_DAYS * 24 * 60 * 60 * 1000);
-  db.prepare("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)").run(
+  await run("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)", 
     hashToken(token),
     userId,
     expires.toISOString()
@@ -46,7 +46,7 @@ export async function destroySession(): Promise<void> {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (token) {
-    db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(hashToken(token));
+    await run("DELETE FROM sessions WHERE token_hash = ?", hashToken(token));
   }
   store.delete(SESSION_COOKIE);
 }
@@ -55,14 +55,14 @@ export async function getCurrentUser(): Promise<User | null> {
   const store = await cookies();
   const token = store.get(SESSION_COOKIE)?.value;
   if (!token) return null;
-  const row = db
-    .prepare(
-      `SELECT u.id, u.name, u.email, u.role, u.org_name, u.phone, u.created_at
-       FROM sessions s JOIN users u ON u.id = s.user_id
-       WHERE s.token_hash = ? AND s.expires_at > ?`
-    )
-    .get(hashToken(token), new Date().toISOString()) as User | undefined;
-  return plain(row) ?? null;
+  const row = await get<User>(
+    `SELECT u.id, u.name, u.email, u.role, u.org_name, u.phone, u.created_at
+     FROM sessions s JOIN users u ON u.id = s.user_id
+     WHERE s.token_hash = ? AND s.expires_at > ?`,
+    hashToken(token),
+    new Date().toISOString()
+  );
+  return row ?? null;
 }
 
 export function validateRegistration(body: {

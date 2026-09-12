@@ -1,4 +1,4 @@
-import db, { plain } from "./db";
+import { all, batch, get, run } from "./db";
 import type { Claim, Donation, DonationStatus, FoodCategory } from "./types";
 
 const DONATION_SELECT = `
@@ -14,12 +14,6 @@ const CLAIM_SELECT = `
   JOIN donations d ON d.id = c.donation_id
 `;
 
-function touch(donationId: number): void {
-  db.prepare("UPDATE donations SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-    donationId
-  );
-}
-
 export interface DonationFilters {
   q?: string;
   city?: string;
@@ -27,7 +21,7 @@ export interface DonationFilters {
   vegOnly?: boolean;
 }
 
-export function listDonations(filters: DonationFilters = {}): Donation[] {
+export async function listDonations(filters: DonationFilters = {}): Promise<Donation[]> {
   const where: string[] = ["d.status = 'available'"];
   const params: (string | number)[] = [];
 
@@ -50,42 +44,35 @@ export function listDonations(filters: DonationFilters = {}): Donation[] {
   where.push("d.expiry_at > ?");
   params.push(new Date().toISOString());
 
-  const rows = plain(
-    db
-      .prepare(`${DONATION_SELECT} WHERE ${where.join(" AND ")} ORDER BY d.created_at DESC LIMIT 100`)
-      .all(...params) as unknown as Donation[]
-  );
-  return rows;
-}
-
-export function listAllCities(): string[] {
-  return (
-    db
-      .prepare("SELECT DISTINCT city FROM donations WHERE status IN ('available','reserved') ORDER BY city")
-      .all() as unknown as { city: string }[]
-  ).map((r) => r.city);
-}
-
-export function getDonation(id: number): Donation | null {
-  const row = db.prepare(`${DONATION_SELECT} WHERE d.id = ?`).get(id) as Donation | undefined;
-  return plain(row) ?? null;
-}
-
-export function getDonationClaims(donationId: number): Claim[] {
-  return plain(
-    db
-      .prepare(`${CLAIM_SELECT} WHERE c.donation_id = ? ORDER BY c.created_at ASC`)
-      .all(donationId) as unknown as Claim[]
+  return all<Donation>(
+    `${DONATION_SELECT} WHERE ${where.join(" AND ")} ORDER BY d.created_at DESC LIMIT 100`,
+    ...params
   );
 }
 
-export function getActiveClaim(donationId: number, claimerId: number): Claim | null {
-  const row = db
-    .prepare(
-      `${CLAIM_SELECT} WHERE c.donation_id = ? AND c.claimer_id = ? AND c.status IN ('pending','approved')`
-    )
-    .get(donationId, claimerId) as Claim | undefined;
-  return plain(row) ?? null;
+export async function listAllCities(): Promise<string[]> {
+  const rows = await all<{ city: string }>(
+    "SELECT DISTINCT city FROM donations WHERE status IN ('available','reserved') ORDER BY city"
+  );
+  return rows.map((r) => r.city);
+}
+
+export async function getDonation(id: number): Promise<Donation | null> {
+  const row = await get<Donation>(`${DONATION_SELECT} WHERE d.id = ?`, id);
+  return row ?? null;
+}
+
+export async function getDonationClaims(donationId: number): Promise<Claim[]> {
+  return all<Claim>(`${CLAIM_SELECT} WHERE c.donation_id = ? ORDER BY c.created_at ASC`, donationId);
+}
+
+export async function getActiveClaim(donationId: number, claimerId: number): Promise<Claim | null> {
+  const row = await get<Claim>(
+    `${CLAIM_SELECT} WHERE c.donation_id = ? AND c.claimer_id = ? AND c.status IN ('pending','approved')`,
+    donationId,
+    claimerId
+  );
+  return row ?? null;
 }
 
 export interface NewDonationInput {
@@ -103,64 +90,58 @@ export interface NewDonationInput {
   imageUrl: string | null;
 }
 
-export function createDonation(input: NewDonationInput): Donation | null {
-  const result = db
-    .prepare(
-      `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, image_url)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(
-      input.donorId,
-      input.title,
-      input.description,
-      input.category,
-      input.quantity,
-      input.servings,
-      input.isVeg ? 1 : 0,
-      input.expiryAt,
-      input.pickupWindow,
-      input.address,
-      input.city,
-      input.imageUrl
-    );
+export async function createDonation(input: NewDonationInput): Promise<Donation | null> {
+  const result = await run(
+    `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, image_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    input.donorId,
+    input.title,
+    input.description,
+    input.category,
+    input.quantity,
+    input.servings,
+    input.isVeg ? 1 : 0,
+    input.expiryAt,
+    input.pickupWindow,
+    input.address,
+    input.city,
+    input.imageUrl
+  );
   return getDonation(Number(result.lastInsertRowid));
 }
 
-export function listDonationsByDonor(donorId: number): Donation[] {
-  return plain(
-    db
-      .prepare(`${DONATION_SELECT} WHERE d.donor_id = ? ORDER BY d.created_at DESC`)
-      .all(donorId) as unknown as Donation[]
+export async function listDonationsByDonor(donorId: number): Promise<Donation[]> {
+  return all<Donation>(`${DONATION_SELECT} WHERE d.donor_id = ? ORDER BY d.created_at DESC`, donorId);
+}
+
+export async function listClaimsByClaimer(claimerId: number): Promise<Claim[]> {
+  return all<Claim>(`${CLAIM_SELECT} WHERE c.claimer_id = ? ORDER BY c.created_at DESC`, claimerId);
+}
+
+export async function countPendingClaims(donationId: number): Promise<number> {
+  const row = await get<{ n: number }>(
+    "SELECT COUNT(*) AS n FROM claims WHERE donation_id = ? AND status = 'pending'",
+    donationId
   );
+  return row?.n ?? 0;
 }
 
-export function listClaimsByClaimer(claimerId: number): Claim[] {
-  return plain(
-    db
-      .prepare(`${CLAIM_SELECT} WHERE c.claimer_id = ? ORDER BY c.created_at DESC`)
-      .all(claimerId) as unknown as Claim[]
-  );
+export async function getClaim(claimId: number): Promise<Claim | null> {
+  const row = await get<Claim>(`${CLAIM_SELECT} WHERE c.id = ?`, claimId);
+  return row ?? null;
 }
 
-export function countPendingClaims(donationId: number): number {
-  const row = db
-    .prepare("SELECT COUNT(*) AS n FROM claims WHERE donation_id = ? AND status = 'pending'")
-    .get(donationId) as { n: number };
-  return row.n;
-}
-
-export function getClaim(claimId: number): Claim | null {
-  const row = db.prepare(`${CLAIM_SELECT} WHERE c.id = ?`).get(claimId) as Claim | undefined;
-  return plain(row) ?? null;
-}
-
-export function createClaim(donationId: number, claimerId: number, message: string | null): Claim | null {
-  const donation = getDonation(donationId);
+export async function createClaim(
+  donationId: number,
+  claimerId: number,
+  message: string | null
+): Promise<Claim | null> {
+  const donation = await getDonation(donationId);
   if (!donation || donation.status !== "available") return null;
   if (donation.expiry_at <= new Date().toISOString()) return null;
-  if (getActiveClaim(donationId, claimerId)) return null;
+  if (await getActiveClaim(donationId, claimerId)) return null;
 
-  db.prepare("INSERT INTO claims (donation_id, claimer_id, message) VALUES (?, ?, ?)").run(
+  await run("INSERT INTO claims (donation_id, claimer_id, message) VALUES (?, ?, ?)", 
     donationId,
     claimerId,
     message
@@ -168,104 +149,119 @@ export function createClaim(donationId: number, claimerId: number, message: stri
   return getActiveClaim(donationId, claimerId);
 }
 
-export function approveClaim(claimId: number, donorId: number): Claim | null {
-  const claim = getClaim(claimId);
+export async function approveClaim(claimId: number, donorId: number): Promise<Claim | null> {
+  const claim = await getClaim(claimId);
   if (!claim || claim.status !== "pending") return null;
-  const donation = getDonation(claim.donation_id);
+  const donation = await getDonation(claim.donation_id);
   if (!donation || donation.donor_id !== donorId || donation.status !== "available") return null;
 
-  db.prepare("UPDATE claims SET status = 'approved', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-    claimId
-  );
-  db.prepare(
-    "UPDATE claims SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE donation_id = ? AND id != ? AND status = 'pending'"
-  ).run(donation.id, claimId);
-  db.prepare("UPDATE donations SET status = 'reserved', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-    donation.id
-  );
+  await batch([
+    {
+      sql: "UPDATE claims SET status = 'approved', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      args: [claimId],
+    },
+    {
+      sql: "UPDATE claims SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE donation_id = ? AND id != ? AND status = 'pending'",
+      args: [donation.id, claimId],
+    },
+    {
+      sql: "UPDATE donations SET status = 'reserved', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      args: [donation.id],
+    },
+  ]);
   return getClaim(claimId);
 }
 
-export function rejectClaim(claimId: number, donorId: number): Claim | null {
-  const claim = getClaim(claimId);
+export async function rejectClaim(claimId: number, donorId: number): Promise<Claim | null> {
+  const claim = await getClaim(claimId);
   if (!claim || claim.status !== "pending") return null;
-  const donation = getDonation(claim.donation_id);
+  const donation = await getDonation(claim.donation_id);
   if (!donation || donation.donor_id !== donorId) return null;
 
-  db.prepare("UPDATE claims SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
+  await run(
+    "UPDATE claims SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
     claimId
   );
-  touch(donation.id);
   return getClaim(claimId);
 }
 
-export function cancelClaim(claimId: number, claimerId: number): Claim | null {
-  const claim = getClaim(claimId);
+export async function cancelClaim(claimId: number, claimerId: number): Promise<Claim | null> {
+  const claim = await getClaim(claimId);
   if (!claim || claim.claimer_id !== claimerId) return null;
   if (claim.status !== "pending" && claim.status !== "approved") return null;
 
-  db.prepare("UPDATE claims SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
+  await run(
+    "UPDATE claims SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
     claimId
   );
   if (claim.status === "approved") {
-    db.prepare("UPDATE donations SET status = 'available', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
+    await run(
+      "UPDATE donations SET status = 'available', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
       claim.donation_id
     );
   }
   return getClaim(claimId);
 }
 
-export function completeClaim(claimId: number, donorId: number): Claim | null {
-  const claim = getClaim(claimId);
+export async function completeClaim(claimId: number, donorId: number): Promise<Claim | null> {
+  const claim = await getClaim(claimId);
   if (!claim || claim.status !== "approved") return null;
-  const donation = getDonation(claim.donation_id);
+  const donation = await getDonation(claim.donation_id);
   if (!donation || donation.donor_id !== donorId || donation.status !== "reserved") return null;
 
-  db.prepare("UPDATE claims SET status = 'completed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-    claimId
-  );
-  db.prepare("UPDATE donations SET status = 'picked_up', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-    donation.id
-  );
+  await batch([
+    {
+      sql: "UPDATE claims SET status = 'completed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      args: [claimId],
+    },
+    {
+      sql: "UPDATE donations SET status = 'picked_up', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      args: [donation.id],
+    },
+  ]);
   return getClaim(claimId);
 }
 
-export function cancelDonation(donationId: number, donorId: number): Donation | null {
-  const donation = getDonation(donationId);
+export async function cancelDonation(donationId: number, donorId: number): Promise<Donation | null> {
+  const donation = await getDonation(donationId);
   if (!donation || donation.donor_id !== donorId) return null;
   if (donation.status !== "available" && donation.status !== "reserved") return null;
 
-  db.prepare("UPDATE donations SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?").run(
-    donationId
-  );
-  db.prepare(
-    "UPDATE claims SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE donation_id = ? AND status IN ('pending','approved')"
-  ).run(donationId);
+  await batch([
+    {
+      sql: "UPDATE donations SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      args: [donationId],
+    },
+    {
+      sql: "UPDATE claims SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE donation_id = ? AND status IN ('pending','approved')",
+      args: [donationId],
+    },
+  ]);
   return getDonation(donationId);
 }
 
-export function getStats(): {
+export async function getStats(): Promise<{
   total_saved: number;
   active_donations: number;
   total_donations: number;
   ngos: number;
   co2_saved_kg: number;
-} {
-  const row = db
-    .prepare(
-      `SELECT
-         COALESCE((SELECT SUM(servings) FROM donations WHERE status = 'picked_up'), 0) AS total_saved,
-         COALESCE((SELECT COUNT(*) FROM donations WHERE status = 'available' AND expiry_at > ?), 0) AS active_donations,
-         COALESCE((SELECT COUNT(*) FROM donations), 0) AS total_donations,
-         COALESCE((SELECT COUNT(*) FROM users WHERE role = 'claimer'), 0) AS ngos`
-    )
-    .get(new Date().toISOString()) as {
+}> {
+  const row = await get<{
     total_saved: number;
     active_donations: number;
     total_donations: number;
     ngos: number;
-  };
-  return { ...row, co2_saved_kg: Math.round(row.total_saved * 0.5 * 10) / 10 };
+  }>(
+    `SELECT
+       COALESCE((SELECT SUM(servings) FROM donations WHERE status = 'picked_up'), 0) AS total_saved,
+       COALESCE((SELECT COUNT(*) FROM donations WHERE status = 'available' AND expiry_at > ?), 0) AS active_donations,
+       COALESCE((SELECT COUNT(*) FROM donations), 0) AS total_donations,
+       COALESCE((SELECT COUNT(*) FROM users WHERE role = 'claimer'), 0) AS ngos`,
+    new Date().toISOString()
+  );
+  const stats = row ?? { total_saved: 0, active_donations: 0, total_donations: 0, ngos: 0 };
+  return { ...stats, co2_saved_kg: Math.round(stats.total_saved * 0.5 * 10) / 10 };
 }
 
 export type { DonationStatus };

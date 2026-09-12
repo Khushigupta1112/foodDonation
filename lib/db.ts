@@ -1,15 +1,11 @@
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import path from "node:path";
+import { createClient, type InValue } from "@libsql/client";
 
-const dataDir = path.join(process.cwd(), "data");
-fs.mkdirSync(dataDir, { recursive: true });
+const url = process.env.TURSO_DATABASE_URL ?? "file:data/foodshare.db";
 
-const db = new DatabaseSync(path.join(dataDir, "foodshare.db"));
-
-db.exec("PRAGMA busy_timeout = 10000;");
-db.exec("PRAGMA foreign_keys = ON;");
-db.exec("PRAGMA journal_mode = WAL;");
+export const db = createClient({
+  url,
+  authToken: process.env.TURSO_AUTH_TOKEN,
+});
 
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS users (
@@ -67,19 +63,42 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
 `;
 
-for (let attempt = 0; ; attempt++) {
-  try {
-    db.exec(SCHEMA);
-    break;
-  } catch (err) {
-    if (attempt >= 5 || (err as NodeJS.ErrnoException).code !== "ERR_SQLITE_ERROR") throw err;
-    const wait = 500 * (attempt + 1);
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+let schemaReady: Promise<unknown> | null = null;
+
+export function ensureSchema(): Promise<unknown> {
+  if (!schemaReady) {
+    schemaReady = db.executeMultiple(SCHEMA).catch((err) => {
+      schemaReady = null;
+      throw err;
+    });
   }
+  return schemaReady;
 }
 
-export function plain<T>(row: T): T {
-  return row == null ? row : (JSON.parse(JSON.stringify(row)) as T);
+export async function all<T>(sql: string, ...args: InValue[]): Promise<T[]> {
+  await ensureSchema();
+  const result = await db.execute({ sql, args });
+  return result.rows.map((row) => ({ ...row })) as unknown as T[];
 }
 
-export default db;
+export async function get<T>(sql: string, ...args: InValue[]): Promise<T | undefined> {
+  const rows = await all<T>(sql, ...args);
+  return rows[0];
+}
+
+export async function run(
+  sql: string,
+  ...args: InValue[]
+): Promise<{ lastInsertRowid: number | null }> {
+  await ensureSchema();
+  const result = await db.execute({ sql, args });
+  return {
+    lastInsertRowid:
+      result.lastInsertRowid == null ? null : Number(result.lastInsertRowid),
+  };
+}
+
+export async function batch(statements: { sql: string; args: InValue[] }[]): Promise<void> {
+  await ensureSchema();
+  await db.batch(statements, "write");
+}

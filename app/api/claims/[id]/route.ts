@@ -21,10 +21,10 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
 
   const action = body.action;
   let claim = null;
-  if (action === "approve") claim = approveClaim(claimId, user.id);
-  else if (action === "reject") claim = rejectClaim(claimId, user.id);
-  else if (action === "complete") claim = completeClaim(claimId, user.id);
-  else if (action === "cancel") claim = cancelClaim(claimId, user.id);
+  if (action === "approve") claim = await approveClaim(claimId, user.id);
+  else if (action === "reject") claim = await rejectClaim(claimId, user.id);
+  else if (action === "complete") claim = await completeClaim(claimId, user.id);
+  else if (action === "cancel") claim = await cancelClaim(claimId, user.id);
   else return NextResponse.json({ error: "Unknown action." }, { status: 400 });
 
   if (!claim) {

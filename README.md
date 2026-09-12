@@ -105,6 +105,45 @@ scripts/seed.mjs  # demo data
 legacy/           # original console-app prototype
 ```
 
+## Deploying to Vercel (with Turso)
+
+Vercel's filesystem is ephemeral, so production uses [Turso](https://turso.app) — a free hosted SQLite (libSQL). Local dev needs no setup (it falls back to a local `file:` SQLite database automatically).
+
+### 1. Create a Turso database
+
+1. Sign up at [turso.app](https://turso.app) (free plan — no credit card).
+2. Create a database (any name, e.g. `foodshare`), any location close to your users.
+3. From the database page copy the **Database URL** (`libsql://…turso.io`).
+4. Create a **database token** and copy it.
+
+### 2. Import the repo in Vercel
+
+1. Push this repo to GitHub (already done).
+2. In [vercel.com/new](https://vercel.com/new), import `Khushigupta1112/foodDonation`.
+3. Framework preset: **Next.js** (auto-detected). No build settings needed.
+4. Add two Environment Variables:
+   - `TURSO_DATABASE_URL` = your `libsql://…` URL
+   - `TURSO_AUTH_TOKEN` = your token
+5. Deploy.
+
+### 3. Seed the production database (optional)
+
+From your machine, pointing at Turso:
+
+```powershell
+$env:TURSO_DATABASE_URL = "libsql://…turso.io"
+$env:TURSO_AUTH_TOKEN   = "your-token"
+npm run db:seed
+```
+
+### Local development
+
+```bash
+npm install
+npm run db:seed   # seeds data/foodshare.db
+npm run dev
+```
+
 ## Roadmap ideas
 
 - 📍 Geolocation-based "near me" matching & distance sort

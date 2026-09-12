@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import db from "@/lib/db";
+import { get } from "@/lib/db";
 import { createSession, verifyPassword } from "@/lib/auth";
 
 export async function POST(request: Request) {
@@ -16,9 +16,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
   }
 
-  const row = db.prepare("SELECT id, password_hash FROM users WHERE email = ?").get(email) as
-    | { id: number; password_hash: string }
-    | undefined;
+  const row = await get<{ id: number; password_hash: string }>(
+    "SELECT id, password_hash FROM users WHERE email = ?",
+    email
+  );
   if (!row || !verifyPassword(password, row.password_hash)) {
     return NextResponse.json({ error: "Invalid email or password." }, { status: 401 });
   }

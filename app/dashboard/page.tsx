@@ -17,11 +17,17 @@ export default async function DashboardPage() {
   if (!user) redirect("/login?next=/dashboard");
 
   const isDonor = user.role === "donor";
-  const [donations, claims, stats] = await Promise.all([
-    isDonor ? Promise.resolve(listDonationsByDonor(user.id)) : Promise.resolve([]),
-    isDonor ? Promise.resolve([]) : Promise.resolve(listClaimsByClaimer(user.id)),
-    Promise.resolve(getStats()),
+  const [donations, claims, stats, pendingCounts] = await Promise.all([
+    isDonor ? listDonationsByDonor(user.id) : Promise.resolve([]),
+    isDonor ? Promise.resolve([]) : listClaimsByClaimer(user.id),
+    getStats(),
+    isDonor
+      ? listDonationsByDonor(user.id).then((ds) =>
+          Promise.all(ds.map((d) => countPendingClaims(d.id)))
+        )
+      : Promise.resolve<number[]>([]),
   ]);
+  const totalPending = pendingCounts.reduce((n, c) => n + c, 0);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-10">
@@ -49,7 +55,7 @@ export default async function DashboardPage() {
         {isDonor ? (
           <>
             <Stat label="Your donations" value={donations.length} />
-            <Stat label="Awaiting approval" value={donations.reduce((n, d) => n + countPendingClaims(d.id), 0)} />
+            <Stat label="Awaiting approval" value={totalPending} />
             <Stat label="Meals rescued by you" value={donations.filter((d) => d.status === "picked_up").reduce((n, d) => n + d.servings, 0)} />
             <Stat label="Meals rescued platform-wide" value={stats.total_saved} />
           </>
@@ -74,8 +80,8 @@ export default async function DashboardPage() {
             />
           ) : (
             <ul className="mt-4 space-y-3">
-              {donations.map((d) => {
-                const pending = countPendingClaims(d.id);
+              {donations.map((d, i) => {
+                const pending = pendingCounts[i] ?? 0;
                 return (
                   <li key={d.id} className="card flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                     <div>

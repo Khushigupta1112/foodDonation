@@ -8,14 +8,14 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   if (!Number.isInteger(donationId)) {
     return NextResponse.json({ error: "Invalid donation id." }, { status: 400 });
   }
-  const donation = getDonation(donationId);
+  const donation = await getDonation(donationId);
   if (!donation) return NextResponse.json({ error: "Donation not found." }, { status: 404 });
 
   const user = await getCurrentUser();
   const isDonor = user?.id === donation.donor_id;
   return NextResponse.json({
     donation,
-    claims: isDonor ? getDonationClaims(donationId) : undefined,
+    claims: isDonor ? await getDonationClaims(donationId) : undefined,
   });
 }
 
@@ -40,7 +40,7 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ id
     return NextResponse.json({ error: "Unknown action." }, { status: 400 });
   }
 
-  const donation = cancelDonation(donationId, user.id);
+  const donation = await cancelDonation(donationId, user.id);
   if (!donation) {
     return NextResponse.json({ error: "Donation cannot be cancelled." }, { status: 409 });
   }

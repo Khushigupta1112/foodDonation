@@ -6,7 +6,7 @@ import type { FoodCategory } from "@/lib/types";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
-  const donations = listDonations({
+  const donations = await listDonations({
     q: url.searchParams.get("q")?.trim() || undefined,
     city: url.searchParams.get("city")?.trim() || undefined,
     category: url.searchParams.get("category")?.trim() || undefined,
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Image URL must be a valid https URL." }, { status: 400 });
   }
 
-  const donation = createDonation({
+  const donation = await createDonation({
     donorId: user.id,
     title,
     description,

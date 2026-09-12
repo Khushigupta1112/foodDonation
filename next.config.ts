@@ -4,6 +4,7 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: __dirname,
   },
+  serverExternalPackages: ["@libsql/client", "libsql"],
 };
 
 export default nextConfig;

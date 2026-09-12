@@ -1,13 +1,16 @@
 import { randomBytes, scryptSync } from "node:crypto";
-import { DatabaseSync } from "node:sqlite";
+import { createClient } from "@libsql/client";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const dataDir = path.join(root, "data");
-fs.mkdirSync(dataDir, { recursive: true });
-const db = new DatabaseSync(path.join(dataDir, "foodshare.db"));
+if (!process.env.TURSO_DATABASE_URL) {
+  fs.mkdirSync(path.join(root, "data"), { recursive: true });
+}
+
+const url = process.env.TURSO_DATABASE_URL ?? `file:${path.join(root, "data", "foodshare.db")}`;
+const db = createClient({ url, authToken: process.env.TURSO_AUTH_TOKEN });
 
 function hashPassword(password) {
   const salt = randomBytes(16).toString("hex");
@@ -18,9 +21,7 @@ const now = new Date();
 const hoursFromNow = (h) => new Date(now.getTime() + h * 3600_000).toISOString();
 const hoursAgo = (h) => new Date(now.getTime() - h * 3600_000).toISOString();
 
-db.exec("PRAGMA foreign_keys = ON;");
-
-db.exec(`
+await db.executeMultiple(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -67,7 +68,7 @@ db.exec(`
   );
 `);
 
-db.exec(`
+await db.executeMultiple(`
   DELETE FROM claims; DELETE FROM sessions;
   DELETE FROM donations; DELETE FROM users;
   DELETE FROM sqlite_sequence WHERE name IN ('users','donations','claims');
@@ -82,9 +83,10 @@ const users = [
 
 const userIds = {};
 for (const [name, email, role, org, phone] of users) {
-  const res = db
-    .prepare("INSERT INTO users (name, email, password_hash, role, org_name, phone) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(name, email, hashPassword("password123"), role, org, phone);
+  const res = await db.execute({
+    sql: "INSERT INTO users (name, email, password_hash, role, org_name, phone) VALUES (?, ?, ?, ?, ?, ?)",
+    args: [name, email, hashPassword("password123"), role, org, phone],
+  });
   userIds[email] = Number(res.lastInsertRowid);
 }
 
@@ -142,35 +144,31 @@ const donations = [
 
 const donationIds = [];
 for (const d of donations) {
-  const res = db
-    .prepare(
-      `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, status, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(userIds[d.donor], d.title, d.description, d.category, d.quantity, d.servings, d.veg, d.expiry, d.pickup, d.address, d.city, d.status, d.created, d.created);
+  const res = await db.execute({
+    sql: `INSERT INTO donations (donor_id, title, description, category, quantity, servings, is_veg, expiry_at, pickup_window, address, city, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [userIds[d.donor], d.title, d.description, d.category, d.quantity, d.servings, d.veg, d.expiry, d.pickup, d.address, d.city, d.status, d.created, d.created],
+  });
   donationIds.push(Number(res.lastInsertRowid));
 }
 
-db.prepare(
-  `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-).run(
-  donationIds[3], userIds["ngo@foodshare.test"],
-  "We can send a volunteer by 6 PM, we serve 60 kids daily.", "approved", hoursAgo(6), hoursAgo(5)
-);
+await db.execute({
+  sql: `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+  args: [donationIds[3], userIds["ngo@foodshare.test"],
+    "We can send a volunteer by 6 PM, we serve 60 kids daily.", "approved", hoursAgo(6), hoursAgo(5)],
+});
 
-db.prepare(
-  `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-).run(
-  donationIds[5], userIds["volunteer@foodshare.test"],
-  "Picking up on my bike, can reach by 4:30.", "completed", hoursAgo(28), hoursAgo(26)
-);
+await db.execute({
+  sql: `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+  args: [donationIds[5], userIds["volunteer@foodshare.test"],
+    "Picking up on my bike, can reach by 4:30.", "completed", hoursAgo(28), hoursAgo(26)],
+});
 
-db.prepare(
-  `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`
-).run(
-  donationIds[6], userIds["ngo@foodshare.test"],
-  "Will collect with our van.", "completed", hoursAgo(48), hoursAgo(47)
-);
+await db.execute({
+  sql: `INSERT INTO claims (donation_id, claimer_id, message, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+  args: [donationIds[6], userIds["ngo@foodshare.test"],
+    "Will collect with our van.", "completed", hoursAgo(48), hoursAgo(47)],
+});
 
-console.log("Seed complete ✔");
+console.log("Seed complete ✔  (" + url + ")");
 console.log("  Log in with donor@foodshare.test / ngo@foodshare.test — password: password123");

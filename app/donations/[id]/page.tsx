@@ -5,6 +5,7 @@ import { DonationStatusBadge } from "@/components/StatusBadge";
 import { getCurrentUser } from "@/lib/auth";
 import { getActiveClaim, getDonation, getDonationClaims } from "@/lib/donations";
 import { CATEGORY_LABELS } from "@/lib/types";
+import type { Claim } from "@/lib/types";
 
 export default async function DonationDetailPage({
   params,
@@ -15,15 +16,15 @@ export default async function DonationDetailPage({
   const donationId = Number(id);
   if (!Number.isInteger(donationId)) notFound();
 
-  const donation = getDonation(donationId);
+  const donation = await getDonation(donationId);
   if (!donation) notFound();
 
   const viewer = await getCurrentUser();
   const isDonor = viewer?.id === donation.donor_id;
   const [claims, viewerClaim] = await Promise.all([
-    isDonor ? Promise.resolve(getDonationClaims(donationId)) : Promise.resolve([]),
+    isDonor ? getDonationClaims(donationId) : Promise.resolve<Claim[]>([]),
     viewer && viewer.role === "claimer"
-      ? Promise.resolve(getActiveClaim(donationId, viewer.id))
+      ? getActiveClaim(donationId, viewer.id)
       : Promise.resolve(null),
   ]);
 

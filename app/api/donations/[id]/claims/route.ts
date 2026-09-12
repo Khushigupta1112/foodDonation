@@ -10,12 +10,12 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
   }
 
   const user = await getCurrentUser();
-  const donation = getDonation(donationId);
+  const donation = await getDonation(donationId);
   if (!donation) return NextResponse.json({ error: "Donation not found." }, { status: 404 });
   if (!user || user.id !== donation.donor_id) {
     return NextResponse.json({ error: "Only the donor can view claims." }, { status: 403 });
   }
-  return NextResponse.json({ claims: getDonationClaims(donationId) });
+  return NextResponse.json({ claims: await getDonationClaims(donationId) });
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -41,7 +41,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     message = null;
   }
 
-  const claim = createClaim(donationId, user.id, message);
+  const claim = await createClaim(donationId, user.id, message);
   if (!claim) {
     return NextResponse.json(
       { error: "This donation is no longer available, or you already have an active claim on it." },
