@@ -14,6 +14,8 @@ const CLAIM_SELECT = `
   JOIN donations d ON d.id = c.donation_id
 `;
 
+const NOW_UTC = `to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+
 export interface DonationFilters {
   q?: string;
   city?: string;
@@ -158,15 +160,15 @@ export async function approveClaim(claimId: number, donorId: number): Promise<Cl
 
   await batch([
     {
-      sql: "UPDATE claims SET status = 'approved', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      sql: `UPDATE claims SET status = 'approved', updated_at = ${NOW_UTC} WHERE id = ?`,
       args: [claimId],
     },
     {
-      sql: "UPDATE claims SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE donation_id = ? AND id != ? AND status = 'pending'",
+      sql: `UPDATE claims SET status = 'rejected', updated_at = ${NOW_UTC} WHERE donation_id = ? AND id != ? AND status = 'pending'`,
       args: [donation.id, claimId],
     },
     {
-      sql: "UPDATE donations SET status = 'reserved', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      sql: `UPDATE donations SET status = 'reserved', updated_at = ${NOW_UTC} WHERE id = ?`,
       args: [donation.id],
     },
   ]);
@@ -180,7 +182,7 @@ export async function rejectClaim(claimId: number, donorId: number): Promise<Cla
   if (!donation || donation.donor_id !== donorId) return null;
 
   await run(
-    "UPDATE claims SET status = 'rejected', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+    `UPDATE claims SET status = 'rejected', updated_at = ${NOW_UTC} WHERE id = ?`,
     claimId
   );
   return getClaim(claimId);
@@ -192,12 +194,12 @@ export async function cancelClaim(claimId: number, claimerId: number): Promise<C
   if (claim.status !== "pending" && claim.status !== "approved") return null;
 
   await run(
-    "UPDATE claims SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+    `UPDATE claims SET status = 'cancelled', updated_at = ${NOW_UTC} WHERE id = ?`,
     claimId
   );
   if (claim.status === "approved") {
     await run(
-      "UPDATE donations SET status = 'available', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      `UPDATE donations SET status = 'available', updated_at = ${NOW_UTC} WHERE id = ?`,
       claim.donation_id
     );
   }
@@ -212,11 +214,11 @@ export async function completeClaim(claimId: number, donorId: number): Promise<C
 
   await batch([
     {
-      sql: "UPDATE claims SET status = 'completed', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      sql: `UPDATE claims SET status = 'completed', updated_at = ${NOW_UTC} WHERE id = ?`,
       args: [claimId],
     },
     {
-      sql: "UPDATE donations SET status = 'picked_up', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      sql: `UPDATE donations SET status = 'picked_up', updated_at = ${NOW_UTC} WHERE id = ?`,
       args: [donation.id],
     },
   ]);
@@ -230,11 +232,11 @@ export async function cancelDonation(donationId: number, donorId: number): Promi
 
   await batch([
     {
-      sql: "UPDATE donations SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?",
+      sql: `UPDATE donations SET status = 'cancelled', updated_at = ${NOW_UTC} WHERE id = ?`,
       args: [donationId],
     },
     {
-      sql: "UPDATE claims SET status = 'cancelled', updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE donation_id = ? AND status IN ('pending','approved')",
+      sql: `UPDATE claims SET status = 'cancelled', updated_at = ${NOW_UTC} WHERE donation_id = ? AND status IN ('pending','approved')`,
       args: [donationId],
     },
   ]);
